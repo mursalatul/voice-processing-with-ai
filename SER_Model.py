@@ -1,10 +1,3 @@
-# Install required packages
-!pip install resampy
-!pip install tensorflow
-!pip install librosa
-!pip install soundfile
-!pip install keras
-
 import os
 import glob
 import re
