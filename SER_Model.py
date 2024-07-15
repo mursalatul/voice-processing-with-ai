@@ -1,3 +1,10 @@
+# Install required packages
+!pip install resampy
+!pip install tensorflow
+!pip install librosa
+!pip install soundfile
+!pip install keras
+
 import os
 import glob
 import re
@@ -8,16 +15,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import (
-    Conv2D,
-    MaxPooling2D,
-    Dropout,
-    LSTM,
-    TimeDistributed,
-    Flatten,
-    Dense,
-    BatchNormalization,
-)
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, LSTM, TimeDistributed, Flatten, Dense, BatchNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.regularizers import l2
@@ -27,7 +25,7 @@ import pickle
 from google.colab import drive
 from google.colab import files
 
-drive.mount("/content/drive", force_remount=True)
+drive.mount('/content/drive', force_remount=True)
 
 # Emotion mapping
 int2emotion = {
@@ -38,14 +36,20 @@ int2emotion = {
     "angry": "angry",
     "fear": "fearful",
     "disgust": "disgust",
-    "surprised": "surprised",
+    "surprised": "surprised"
 }
 
 # Allowed emotions
-AVAILABLE_EMOTIONS = {"angry", "disgust", "fearful", "sad", "neutral", "happy"}
+AVAILABLE_EMOTIONS = {
+    "angry",
+    "disgust",
+    "fearful",
+    "sad",
+    "neutral",
+    "happy"
+}
 
-file_pattern = r"/content/drive/MyDrive/SER/dataverse_files/**/*.wav"
-
+file_pattern = '/content/drive/MyDrive/SER/dataverse_files/**/*.wav'
 
 def extract_feature(file_name, **kwargs):
     mfcc = kwargs.get("mfcc", False)
@@ -86,22 +90,19 @@ def extract_feature(file_name, **kwargs):
             result = np.hstack((result, ensure_1d(contrast, "Contrast")))
 
         if tonnetz:
-            tonnetz = librosa.feature.tonnetz(
-                y=librosa.effects.harmonic(X), sr=sample_rate
-            )
+            tonnetz = librosa.feature.tonnetz(y=librosa.effects.harmonic(X), sr=sample_rate)
             result = np.hstack((result, ensure_1d(tonnetz, "Tonnetz")))
 
     return result
-
 
 def load_data(test_size=0.2):
     X, y = [], []
     files = glob.glob(file_pattern, recursive=True)
     print("Files found:", len(files))
-
     for file in files:
+        print(file)  # Print each file path to verify correct matching
         basename = os.path.basename(file)
-        match = re.match(r".+_(.+)\.wav", basename)
+        match = re.match(r'.+_.+_(.+)\.wav', basename)
 
         if not match:
             print(f"Skipping file with unexpected name format: {basename}")
@@ -111,19 +112,19 @@ def load_data(test_size=0.2):
         emotion = int2emotion.get(emotion_code.lower())
 
         if emotion is None:
-            print(
-                f"Skipping file with unrecognized emotion code: {basename} (code: {emotion_code})"
-            )
+            print(f"Skipping file with unrecognized emotion code: {basename} (code: {emotion_code})")
             continue
 
         print(f"Processing file: {file}, Emotion: {emotion}")
 
         if emotion in AVAILABLE_EMOTIONS:
             features = extract_feature(file, mfcc=True, chroma=True, mel=True)
-            # shape is constant (180,)
-            # print(f"Extracted features shape: {features.shape}")
-            X.append(features)
-            y.append(emotion)
+            if features is not None:
+                print(f"Extracted features shape: {features.shape}")  # Print feature shape for each file
+                X.append(features)
+                y.append(emotion)
+            else:
+                print(f"Failed to extract features from file: {file}")
         else:
             print(f"Skipping emotion: {emotion}")
 
@@ -132,7 +133,6 @@ def load_data(test_size=0.2):
 
     return train_test_split(np.array(X), y, test_size=test_size, random_state=7)
 
-
 try:
     X_train, X_test, y_train, y_test = load_data(test_size=0.25)
     print("Data loaded successfully")
@@ -140,6 +140,41 @@ try:
     print("[+] Number of testing samples:", len(X_test))
 except ValueError as e:
     print("Error:", e)
+
+# Encode labels
+le = LabelEncoder()
+
+# Check if labels are not empty
+if len(y_train) == 0 or len(y_test) == 0:
+    print('Labels array is empty. Please check the data loading process.')
+    raise ValueError("Labels array is empty. Please check the data loading process.")
+
+# Debugging: Verify unique labels before encoding
+unique_labels_before_encoding = np.unique(y_train + y_test)
+print(f"Unique labels before encoding: {unique_labels_before_encoding}")
+
+y_train = le.fit_transform(y_train)
+y_test = le.transform(y_test)
+y_train = to_categorical(y_train)
+y_test = to_categorical(y_test)
+
+# Debugging: Verify unique labels after encoding
+unique_labels_after_encoding = np.unique(np.argmax(y_train, axis=1))
+print(f"Unique labels after encoding: {unique_labels_after_encoding}")
+
+# Reshape for CNN input
+X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+
+# Verify shapes
+print(f"Training data shape: {X_train.shape}")
+print(f"Testing data shape: {X_test.shape}")
+print(f"Training labels shape: {y_train.shape}")
+print(f"Testing labels shape: {y_test.shape}")
+
+# Flatten the input features for MLPClassifier
+X_train_flat = X_train.reshape(X_train.shape[0], -1)
+X_test_flat = X_test.reshape(X_test.shape[0], -1)
 
 # Training MLP Classifier as a preliminary model
 model_params = {
@@ -153,9 +188,9 @@ model_params = {
 model = MLPClassifier(**model_params)
 
 print("[*] Training the model...")
-model.fit(X_train, y_train)
+model.fit(X_train_flat, y_train)
 
-y_pred = model.predict(X_test)
+y_pred = model.predict(X_test_flat)
 accuracy = accuracy_score(y_true=y_test, y_pred=y_pred)
 print("Accuracy: {:.2f}%".format(accuracy * 100))
 
@@ -164,82 +199,61 @@ if not os.path.isdir("result"):
 
 pickle.dump(model, open("result/mlp_classifier.model", "wb"))
 
-
 def extract_features(file_path, max_len=174):
-    audio, sample_rate = librosa.load(file_path, res_type="kaiser_fast")
+    audio, sample_rate = librosa.load(file_path, res_type='kaiser_fast')
     mfccs = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40)
     if mfccs.shape[1] < max_len:
         pad_width = max_len - mfccs.shape[1]
-        mfccs = np.pad(mfccs, pad_width=((0, 0), (0, pad_width)), mode="constant")
+        mfccs = np.pad(mfccs, pad_width=((0, 0), (0, pad_width)), mode='constant')
     else:
         mfccs = mfccs[:, :max_len]
     return mfccs
 
-
-def extract_label_from_filename(filename):
-    parts = filename.split("_")
-    if len(parts) > 1:
-        return parts[1]
-    else:
-        return None
-
-
-def load_data(file_pattern):
-    labels = []
+def load_data(file_path_pattern, test_size=0.2):
     features = []
-    for root, dirs, files in os.walk(file_pattern):
-        for file in files:
-            if file.endswith(".wav"):
-                file_path = os.path.join(root, file)
-                print(f"Processing file: {file_path}")  # Debugging: print file path
-                feature = extract_features(file_path)
-                label = extract_label_from_filename(file)
-                if label:
-                    features.append(feature)
-                    labels.append(label)
-                else:
-                    print(f"Skipping file due to invalid label extraction: {file_path}")
+    labels = []
+    for file_path in glob.glob(file_path_pattern, recursive=True):
+        try:
+            print(f"Processing file: {file_path}")  # Debug statement
+            file_name = os.path.basename(file_path)
+            print(f"File name: {file_name}")  # Debug statement
+
+            match = re.match(r'.+_.+_(.+)\.wav', file_name)
+            if not match:
+                print(f"Skipping file with unexpected name format: {file_name}")
+                continue
+
+            emotion_code = match.group(1)
+            label = int2emotion.get(emotion_code.lower())
+            if label not in AVAILABLE_EMOTIONS:
+                print(f"Skipping unrecognized or unavailable emotion: {label}")
+                continue
+
+            print(f"Extracted label: {label}")  # Debug statement
+            data = extract_features(file_path)
+            features.append(data)
+            labels.append(label)
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+
+    print(f"Total files processed: {len(features)}")  # Debug statement
+    print(f"Total labels processed: {len(labels)}")  # Debug statement
+
     return np.array(features), np.array(labels)
 
+file_path_pattern = '/content/drive/MyDrive/SER/dataverse_files/**/*.wav'
+features, labels = load_data(file_path_pattern, test_size=0.2)
 
-features, labels = load_data(file_pattern)
-
-# Debugging: Print shapes and contents
-print(f"Features shape: {features.shape}")
-print(f"Labels shape: {labels.shape}")
-print(f"Labels: {labels[:10]}")  # Print first 10 labels for debugging
+if len(labels) == 0:
+    raise ValueError("No labels found. Check the data loading process and file patterns.")
 
 # Encode labels
 le = LabelEncoder()
+encoded_labels = le.fit_transform(labels)
+encoded_labels = to_categorical(encoded_labels)
 
-"""
-having issues here as labels are 0
-"""
-
-# Check if labels are not empty
-if labels.size == 0:
-    print("empty array")
-    # raise ValueError("Labels array is empty. Please check the data loading process.")
-
-# Debugging: Verify unique labels before encoding
-unique_labels_before_encoding = np.unique(labels)
-print(f"Unique labels before encoding: {unique_labels_before_encoding}")
-
-labels = le.fit_transform(labels)
-labels = to_categorical(labels)
-
-# Debugging: Verify unique labels after encoding
-unique_labels_after_encoding = np.unique(labels.argmax(axis=1))
-print(f"Unique labels after encoding: {unique_labels_after_encoding}")
-
-# Train-test split
-X_train, X_test, y_train, y_test = train_test_split(
-    features, labels, test_size=0.2, random_state=42
-)
-
-# Reshape for CNN input
-X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], 1)
-X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], X_test.shape[2], 1)
+# Split the data
+X_train, X_test, y_train, y_test = train_test_split(features, encoded_labels, test_size=0.25, random_state=42)
 
 # Verify shapes
 print(f"Training data shape: {X_train.shape}")
@@ -247,95 +261,69 @@ print(f"Testing data shape: {X_test.shape}")
 print(f"Training labels shape: {y_train.shape}")
 print(f"Testing labels shape: {y_test.shape}")
 
+X_train = np.expand_dims(X_train, -1)
+X_test = np.expand_dims(X_test, -1)
 
-def create_crnn_model(input_shape, num_classes, learning_rate=0.001):
-    model = Sequential()
+model = Sequential()
+model.add(Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=(40, 174, 1)))
+model.add(BatchNormalization())
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.25))
 
-    model.add(
-        Conv2D(
-            32,
-            kernel_size=(3, 3),
-            activation="relu",
-            input_shape=input_shape,
-            kernel_regularizer=l2(0.001),
-        )
-    )
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.3))
+model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
+model.add(BatchNormalization())
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.25))
 
-    model.add(
-        Conv2D(64, kernel_size=(3, 3), activation="relu", kernel_regularizer=l2(0.001))
-    )
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.3))
+model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
+model.add(BatchNormalization())
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.25))
 
-    model.add(TimeDistributed(Flatten()))
+model.add(TimeDistributed(Flatten()))
 
-    # LSTM layers
-    model.add(LSTM(64, return_sequences=False, kernel_regularizer=l2(0.001)))
-    model.add(Dropout(0.3))
+model.add(LSTM(128, return_sequences=False, dropout=0.5))
 
-    # Output layer
-    model.add(Dense(num_classes, activation="softmax"))
+model.add(Dense(len(unique_labels_after_encoding), activation='softmax'))
 
-    optimizer = Adam(learning_rate=learning_rate)
-    model.compile(
-        loss="categorical_crossentropy", optimizer=optimizer, metrics=["accuracy"]
-    )
-
-    return model
-
-
-input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3])
-num_classes = y_train.shape[1]
-
-model = create_crnn_model(input_shape, num_classes)
+model.compile(optimizer=Adam(learning_rate=0.0001), loss='categorical_crossentropy', metrics=['accuracy'])
 
 model.summary()
 
-# Callbacks
-checkpoint = ModelCheckpoint(
-    "best_model.keras", monitor="val_loss", verbose=1, save_best_only=True, mode="min"
-)
-early_stopping = EarlyStopping(
-    monitor="val_loss", patience=5, restore_best_weights=True
-)
-reduce_lr = ReduceLROnPlateau(
-    monitor="val_loss", factor=0.2, patience=3, min_lr=0.00001
-)
+checkpoint = ModelCheckpoint("model.h5", monitor='val_accuracy', save_best_only=True, mode='max')
+earlystop = EarlyStopping(monitor='val_loss', patience=10, verbose=1, mode='min')
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, verbose=1, mode='min')
 
-# Train the model
-history = model.fit(
-    X_train,
-    y_train,
-    batch_size=32,
-    epochs=100,
-    validation_data=(X_test, y_test),
-    callbacks=[checkpoint, early_stopping, reduce_lr],
-    verbose=1,
-)
+history = model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, callbacks=[checkpoint, earlystop, reduce_lr])
 
-# Print training history
-print(history.history)
+import matplotlib.pyplot as plt
 
-# Load the best model
-model.load_weights("best_model.keras")
+def plot_history(history):
+    plt.figure(figsize=(12, 4))
+    
+    # Plot training & validation accuracy values
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['accuracy'])
+    plt.plot(history.history['val_accuracy'])
+    plt.title('Model accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend(['Train', 'Validation'], loc='upper left')
+    
+    # Plot training & validation loss values
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('Model loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend(['Train', 'Validation'], loc='upper left')
+    
+    plt.show()
 
-# Evaluate the model on test data
+plot_history(history)
+
+model.load_weights('model.h5')
+
 test_loss, test_acc = model.evaluate(X_test, y_test, verbose=2)
-print(f"Test accuracy: {test_acc * 100:.2f}%")
-
-# Save the trained model
-if not os.path.isdir("result"):
-    os.mkdir("result")
-
-model.save("result/crnn_model.h5")
-
-uploaded = files.upload()
-
-for file_name in uploaded.keys():
-    print(f"Processing file: {file_name}")
-    emotion = file_name
-    print(emotion)
+print(f'Test accuracy: {test_acc * 100:.2f}')
